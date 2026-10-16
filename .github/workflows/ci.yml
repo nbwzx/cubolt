@@ -1,0 +1,103 @@
+# ci.yml -- a push to main, a PR or a v* tag runs the quick checks; the heavy gate (table build + verify) is manual via workflow_dispatch.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']   # the pattern release.yml publishes on
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run the table-building gate as well
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# A force-push cancels; main and tags keep their runs, since a release is read from those.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: >-
+    ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with: &python
+          python-version: '3.13'
+
+      - uses: vercel-labs/setup-zig@v1
+        with: &zig
+          version: 0.16.0
+
+      # build.bat is what a local build runs, so CI checks what a local build makes.
+      - name: Build
+        shell: pwsh
+        run: &build |
+          ./build.bat
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Source checks
+        shell: pwsh
+        run: |
+          python tests/source_checks.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  gate:
+    needs: check
+    if: inputs.full
+    runs-on: windows-latest
+
+    # verify.py runs once every table is built here: 90 minutes, against the check job's 15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with: *python
+
+      - uses: vercel-labs/setup-zig@v1
+        with: *zig
+
+      # The image ships no makensis, and choco's PATH does not reach later steps.
+      - name: NSIS
+        shell: pwsh
+        run: |
+          if (Get-Command makensis -ErrorAction SilentlyContinue) { exit 0 }
+          choco install nsis --yes --no-progress
+          $dir = "${env:ProgramFiles(x86)}\NSIS"
+          if (-not (Test-Path "$dir\makensis.exe")) { throw "makensis.exe is not in $dir" }
+          $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      # a gcc for verify.py's strict passes (the image ships none); inherit keeps zig on PATH
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+          path-type: inherit
+
+      - name: Build
+        shell: pwsh
+        run: *build
+
+      - name: Build the solver tables
+        shell: pwsh
+        run: |
+          Push-Location bin
+          ./mktables.exe
+          $rc = $LASTEXITCODE
+          Pop-Location
+          if ($rc -ne 0) { exit $rc }
+
+      - name: Gate
+        shell: msys2 {0}
+        run: python tests/verify.py

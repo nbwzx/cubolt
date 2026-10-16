@@ -1,0 +1,16 @@
+# Build artifacts
+bin/
+installer/CuboltSetup-*.exe
+
+# Editor / OS noise
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
+
+# Experiments and ad-hoc runs
+_*
+
+# Solutions a run writes
+output/

@@ -1,0 +1,68 @@
+# release.yml -- pushing a version tag builds the setup program and publishes it as a release.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: vercel-labs/setup-zig@v1
+        with:
+          version: 0.16.0
+
+      - name: NSIS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis --yes --no-progress
+            $dir = "${env:ProgramFiles(x86)}\NSIS"
+            if (-not (Test-Path "$dir\makensis.exe")) { throw "makensis.exe is not in $dir" }
+            $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+
+      # version.h is the one place the version lives; the tag only announces it.
+      - name: Tag matches version.h
+        shell: bash
+        run: |
+          v=$(awk '$2 ~ /^CUBOLT_VERSION_(MAJOR|MINOR|PATCH)$/ {printf "%s%s", (n++ ? "." : ""), $3}' include/version.h)
+          if [ "${GITHUB_REF_NAME#v}" != "$v" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match version.h ($v)" >&2
+            exit 1
+          fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+
+      # The repo's own build script, so what is released is what a local build produces.
+      - name: Build
+        shell: pwsh
+        run: |
+          ./build.bat
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Push-Location installer
+          # Quoted: bare, PowerShell splits this in two: -DVERSION=$ and the version.
+          makensis "-DVERSION=$($env:VERSION)" cubolt.nsi
+          Pop-Location
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      # Re-running a job whose upload half failed must not stop at "release already exists".
+      - name: Publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          asset="installer/CuboltSetup-$VERSION.exe"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$asset" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$asset" \
+              --title "Cubolt $VERSION" --generate-notes
+          fi

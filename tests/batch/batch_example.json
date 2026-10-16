@@ -1,0 +1,20 @@
+[
+  {
+    "name": "sune",
+    "subgroup": "RU",
+    "depth": 22,
+    "cubestring": "RUFUUUUULBBURRRRRRBFUFFFFFFDDDDDDDDDFRRLLLLLLLLUBBBBBB"
+  },
+  {
+    "name": "rus-short",
+    "subgroup": "RUS",
+    "depth": 10,
+    "scramble": "R S R' S'"
+  },
+  {
+    "name": "comm-rl",
+    "subgroup": "RUF",
+    "depth": 17,
+    "scramble": "R U R' U' R' F R F'"
+  }
+]

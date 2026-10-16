@@ -1,0 +1,3 @@
+sune 22 RU --cubestring RUFUUUUULBBURRRRRRBFUFFFFFFDDDDDDDDDFRRLLLLLLLLUBBBBBB
+rus-short 10 RUS --scramble R S R' S'
+comm-rl 17 RUF --scramble R U R' U' R' F R F'

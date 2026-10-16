@@ -1,0 +1,29 @@
+# benchmark_jobs.txt -- job lines for `search.exe --bench`, run by tests/bench.py.
+#   make bench                              sample them and print the report
+#   python tests/bench.py --update          make this run both baselines
+#   <name> <depth> <subgroup> [flags] --cubestring <54 chars> | --scramble <algorithm>
+#   --goal <54 chars> may ride along with either one
+# Only the load cases: the behavior ones are pinned by tests/cli_validation_test.py.
+Aperm-U 14 URFDLBEMSxyz --scramble R F R2 D' R U R' D R U' R F' R'
+Aperm-R 14 URFDLBEMSxyz --scramble D' R' U R U' R' D R U R' U' D' R D
+Aperm-F 14 URFDLBEMSxyz --scramble R' U' D' R U R' D R U' R' U R
+Aperm-U-face 15 URFDLB --scramble R F R2 D' R U R' D R U' R F' R'
+Aperm-R-face 15 URFDLB --scramble D' R' U R U' R' D R U R' U' D' R D
+Aperm-F-face 15 URFDLB --scramble R' U' D' R U R' D R U' R' U R
+mixed-full 14 URFDLBEMSxyz --scramble R U R' F2 L D2 B
+mixed-RUS 18 RUS --scramble U R' S R2 S2 R' U' R S2 R2 S' R
+RUM 19 RUM --scramble R U M2 U' R'
+RUM-xyz 19 RUMxyz --scramble R U M2 U' R'
+goal-Aperm-U 14 URFDLBEMSxyz --cubestring UUUUUUUUURRRRRRRRRFFFFFFFFFDDDDDDDDDLLLLLLLLLBBBBBBBBB --goal UUUUUUUUULRRRRRRRRRFBFFFFFFDDDDDDDDDFLFLLLLLLBBLBBBBBB
+mixed-norot 14 URFDLBEMS --scramble R U R' F2 L D2 B
+mixed-dump 14 URFDLBEMS --dump --scramble R U R' F2 L D2 B
+many-15 15 URFDLB --scramble L2 F2 L2 B2 R2 F2 D
+wide-16 16 urfdlbxyz --scramble R U R' F2 L D2 B
+ic-20blank 17 URFDLB --cubestring ?F?BU?DF?B???RRR?URUULFF?L?F?UBDDRL?B??BLU?DU???DBR?F?
+ic-partial 14 URFDLB --cubestring UU?UUU?FL?R?BRRURR?R?FFUFFFDDRDDDDDDFF?LLLLLL?LLBBBBBB
+ic-4edge 14 URFDLB --cubestring U?U?U?L?DF?RFRRLRRF?RFFRFUUUBBDDDDDDF?DLLDLLRB?LBBBBBB
+ic-4corner 13 URFDLB --cubestring ?U?DUU?L??L?RRRDRL?F?BFBBBBUDRDDUDDD?L?ULLRRL?B?FBFFFF
+ic-5corner 13 URFDLB --cubestring ?U?DUU?L??L?RRR?RL?F?BFBBB?UD?DDUDDD?L?ULLRRL?B?FBFFFF
+ic-0edge 12 URFDLB --cubestring U?L?U?U?FR?U?R?U?RF?D?F?F?FD?R?D?D?DB?L?L?L?LB?R?B?B?B
+ic-4edge-URFM 15 URFM --cubestring U?U?U?L?DF?RFRRLRRF?RFFRFUUUBBDDDDDDF?DLLDLLRB?LBBBBBB
+ic-4edge-RUF 14 RUF --cubestring U?U?U?L?DF?RFRRLRRF?RFFRFUUUBBDDDDDDF?DLLDLLRB?LBBBBBB

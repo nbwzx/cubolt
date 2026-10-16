@@ -1,0 +1,2 @@
+/* icon.rc -- cubolt.ico as resource id 1. */
+1 ICON "cubolt.ico"

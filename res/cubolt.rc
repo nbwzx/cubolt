@@ -1,0 +1,35 @@
+/* cubolt.rc -- version block and ComCtl32 v6 manifest for cubolt.exe: icon.rc stamps the icon. */
+/* Types are numeric (16 = RT_VERSION, 24 = RT_MANIFEST): a symbolic one is stored as a string. */
+
+#include "version.h"
+
+1 16
+FILEVERSION    CUBOLT_VERSION_MAJOR, CUBOLT_VERSION_MINOR, CUBOLT_VERSION_PATCH, 0
+PRODUCTVERSION CUBOLT_VERSION_MAJOR, CUBOLT_VERSION_MINOR, CUBOLT_VERSION_PATCH, 0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS     0x0L
+FILEOS        0x00040004L                                /* VOS_NT_WINDOWS32 */
+FILETYPE      0x00000001L                                /* VFT_APP */
+FILESUBTYPE   0x0L
+{
+    BLOCK "StringFileInfo"
+    {
+        BLOCK "040904b0"                              /* U.S. English, Unicode */
+        {
+            VALUE "FileDescription",  CUBOLT_NAME " -- an optimal Rubik's Cube solver"
+            VALUE "FileVersion",      CUBOLT_VERSION
+            VALUE "ProductName",      CUBOLT_NAME
+            VALUE "ProductVersion",   CUBOLT_VERSION
+            VALUE "CompanyName",      CUBOLT_AUTHOR
+            VALUE "LegalCopyright",   "Copyright (C) " CUBOLT_YEAR " " CUBOLT_AUTHOR " <" CUBOLT_EMAIL ">"
+            VALUE "OriginalFilename", "cubolt.exe"
+        }
+    }
+    BLOCK "VarFileInfo"
+    {
+        VALUE "Translation", 0x0409, 1200
+    }
+}
+
+/* ComCtl32 v6: without it the controls draw in the classic style on every OS. */
+1 24 "cubolt.exe.manifest"
