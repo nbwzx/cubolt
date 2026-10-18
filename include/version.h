@@ -7,7 +7,7 @@
 #define VERSION_H
 
 #define CUBOLT_VERSION_MAJOR 0
-#define CUBOLT_VERSION_MINOR 1
+#define CUBOLT_VERSION_MINOR 2
 #define CUBOLT_VERSION_PATCH 0
 
 #define CUBOLT_NAME    "Cubolt"
