@@ -96,7 +96,7 @@ cubolt.exe --selftest   # headless solve, writes _selftest.out
 cubolt.exe --layout     # headless layout check, writes _layout.out
 ```
 
-The cube net is on the left and the controls are on the right. Click a sticker to paint it in the color picked from the swatches, right-click to hide it (`?`), and right-click again to restore its color; you can also paste a cubestring. _Reset_ restores the solved cube and _Clear_ hides every sticker but the six centers. _Auto complete_, under the net, fills in the stickers the laws of the cube force after each color painted; a sticker hidden with a right-click is left alone. The net reports how much of the cube is still known. _Help > Contents_ documents the inputs, the search options, the log and the batch files.
+The cube net is on the left and the controls are on the right. Click a center to take the color from it, click any other sticker to paint it in that color, and right-click to hide it (`?`), right-click again to restore its color; you can also paste a cubestring. _Reset_ restores the solved cube and _Clear_ hides every sticker but the six centers. _Auto complete_, under the net, fills in the stickers the laws of the cube force after each color painted; a sticker hidden with a right-click is left alone. The net reports how much of the cube is still known. _Help > Contents_ documents the inputs, the search options, the log and the batch files.
 
 Tables are mmap'd on a background thread. _Solve_ starts only once they are ready. If a table set is missing, it is built there, and the builder output appears in the log. _Help > Check for Updates_ queries GitHub for the latest release on its own thread.
 

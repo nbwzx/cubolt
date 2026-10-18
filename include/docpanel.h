@@ -84,6 +84,11 @@ static const Block HELP_DOC[] = {
                "than 54 stickers, and shows in red what is wrong with a complete but impossible "
                "one.  Reset restores the solved cube; Clear hides every sticker but the six "
                "centers, so a cube can be painted from nothing." },
+    { B_STEP,  "Painting:| The six centers are the six colors: a click on one takes the color "
+               "from it, and the one taken is shown with the name Selected Color under the net; "
+               "a click on that chip takes the next.  A click on any other sticker paints it in "
+               "the taken color.  The pointer says which it is over: a dropper over a center, a "
+               "paint bucket over a sticker." },
     { B_STEP,  "Incomplete cube:| A ? in the definition string hides that sticker; right-"
                "clicking one in the net hides it, and a second click restores the color it "
                "had.  The six centers cannot be hidden: they define the frame.  With Auto "

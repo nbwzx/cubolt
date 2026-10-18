@@ -96,10 +96,11 @@ static int   g_dpi  = 96;
 static HFONT g_font = NULL;
 static HFONT g_mono_font = NULL;
 static HPEN   g_net_pen = NULL;
-static HPEN   g_mark_pen = NULL;
 static HPEN   g_chk_pen = NULL;
 static HFONT  g_net_font = NULL;
 static HFONT  g_list_font = NULL;  /* the listbox' monospace face, kept so WM_DESTROY frees it */
+/* the canvas' two: a dropper over a center, a bucket over the sticker it paints */
+static HCURSOR g_cur_pick = NULL, g_cur_paint = NULL;
 static HBRUSH g_face_brush[7];    /* one per face letter, then the gray fallback */
 /* the two owner-drawn buttons: three accents with pressed shades, made once in build_ui */
 #define BTN_N   3
@@ -260,7 +261,7 @@ typedef struct {
     HWND     solve_btn, stop_btn;
     HWND     hw_onlyopt, hw_sort;   /* kept so the Option menu can mirror the checkboxes */
     char     net[6][3][3];       /* color letter per sticker */
-    int      curcol;             /* 0..5 index into FACES */
+    int      curcol;             /* 0..5: the face whose center carries the selected color */
     int      net_bad;
     int      hint_bad;           /* the input hint is carrying an error, not just progress */
     int      autocpl;            /* the Auto complete box under the net is ticked */
@@ -1271,6 +1272,9 @@ static void build_ui(HWND hw, HINSTANCE hinst)
 
     g.canvas = CreateWindow(CANVAS_CLASS, NULL, WS_CHILD | WS_VISIBLE,
                             SZ(8), SZ(8), cw, chh, hw, NULL, hinst, NULL);
+    g.curcol = 0;                    /* U is picked to begin with */
+    g_cur_pick  = dropper_make(13, 51);
+    g_cur_paint = bucket_make(12, 30, face_color(FACES[g.curcol]));
     /* ticked to begin with: the laws answer as the user paints, unless he unticks it */
     g.autocpl = 1;
 
@@ -1407,7 +1411,6 @@ static void build_ui(HWND hw, HINSTANCE hinst)
 
     /* made once for the window: a drag stutters if these are made per WM_PAINT */
     g_net_pen  = CreatePen(PS_SOLID, 1, RGB(0x33, 0x33, 0x33));
-    g_mark_pen = CreatePen(PS_SOLID, 4, RGB(0, 0, 0));
     /* the tick in the Auto complete box, in the accent the Solve button carries */
     g_chk_pen  = CreatePen(PS_SOLID, SZ(2), BTN_BASE[1]);
     g_net_font = CreateFont(-SZ(15), 0, 0, 0, FW_BOLD, 0, 0, 0,
@@ -2008,8 +2011,9 @@ static LRESULT CALLBACK MainProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
         for (int i = 0; i < 7; i++)
             if (g_face_brush[i]) DeleteObject(g_face_brush[i]);
         if (g_net_pen)  DeleteObject(g_net_pen);
-        if (g_mark_pen) DeleteObject(g_mark_pen);
         if (g_chk_pen)  DeleteObject(g_chk_pen);
+        if (g_cur_pick)  DestroyIcon((HICON)g_cur_pick);
+        if (g_cur_paint) DestroyIcon((HICON)g_cur_paint);
         if (g_net_font) DeleteObject(g_net_font);
         if (g_font)      DeleteObject(g_font);
         if (g_mono_font) DeleteObject(g_mono_font);
