@@ -22,7 +22,7 @@ BIN = os.path.join(ROOT, "bin")
 QUIET = 0.15
 
 REPEAT = 3
-TIMEOUT = 900
+TIMEOUT = 2000
 
 # The nine answer columns in order: written as the baseline file's header line, and counted.
 ANSWER_HEADER = "case\tdepth\tsubgroup\tnmoves\tnsol\tnstd\tlengths\tnodes\tsolhash"

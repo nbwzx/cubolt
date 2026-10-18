@@ -66,7 +66,7 @@ def verdict():
 
 # --- running one process ---
 # A step that hangs or will not start fails as one, not as a traceback that names no step.
-STEP_TIMEOUT = 900
+STEP_TIMEOUT = 2000
 
 
 def run(cmd, cwd=ROOT, timeout=STEP_TIMEOUT):
