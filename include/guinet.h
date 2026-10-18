@@ -132,6 +132,18 @@ static void input_hint(const char *msg, int bad)
     if (g.hint_bad != was) InvalidateRect(g.inphint, NULL, TRUE);
 }
 
+/* ---- Auto complete ---- */
+/* Fill in every '?' the laws of the cube force.  It is asked after a color is painted and
+   after the box takes a new string; a sticker the user hid is his own answer, not a gap. */
+static void autocpl_run(void)
+{
+    if (!g.autocpl) return;
+    char box[CS_STICKERS + 1], out[CS_STICKERS + 1];
+    box_text(g.cubestring, box, sizeof box);
+    if (!strchr(box, '?')) return;
+    if (ic_complete(box, out) > 0) show_cs(out);
+}
+
 static void load_cs_box(void)
 {
     char cs[160], why[256], note[96];
@@ -148,6 +160,7 @@ static void load_cs_box(void)
     if (bad) return;
     net_from_cs(cs);
     InvalidateRect(g.canvas, NULL, TRUE);
+    autocpl_run();
 }
 
 /* The line the net starts on and the one it goes back to when nothing is wrong. */
@@ -172,7 +185,7 @@ static void net_status(void)
             for (const char *q = cs; *q; q++) if (*q == '?') hidden++;
             /* IC_CNT_SAT: counting stopped there, so that many is a floor, not a total */
             int counted = 1;
-            unsigned long long nc = incomp_count(cs, &counted);
+            unsigned long long nc = incomp_count(cs, &counted, IC_CNT_SAT);
             char partly[24] = "", cases[40];
             if (npart) snprintf(partly, sizeof partly, ", %d partly", npart);
             if (!counted)
@@ -209,6 +222,19 @@ static void swatch_xy(int i, int *x, int *y)
 {
     *x = 7 * A + (i % 3) * (A + SZ(6));
     *y = 7 * A + (i / 3) * (A + SZ(6));
+}
+
+/* Auto complete: a box and its label, in the cell the net leaves blank under L.  The whole
+   strip is the click target, the way a check box and its caption are one. */
+#define AUTOCPL_TITLE "Auto complete"
+static RECT autocpl_rect(void)
+{
+    RECT r;
+    r.left   = SZ(12);
+    r.top    = SZ(10) + 9 * A - SZ(30);
+    r.right  = r.left + SZ(126);
+    r.bottom = r.top + SZ(22);
+    return r;
 }
 
 static void paint_canvas(HWND hw)
@@ -249,20 +275,50 @@ static void paint_canvas(HWND hw)
             SelectObject(hdc, g_net_pen);
         }
     }
+
+    /* drawn here, not as a child button: a window of its own would carry the panel's gray
+       into the net's white cell */
+    {
+        RECT ar = autocpl_rect();
+        int side = SZ(14);
+        int bx = ar.left, by = ar.top + ((ar.bottom - ar.top) - side) / 2;
+        HGDIOBJ ob = SelectObject(hdc, GetStockObject(WHITE_BRUSH));
+        Rectangle(hdc, bx, by, bx + side, by + side);
+        SelectObject(hdc, ob);
+        if (g.autocpl) {
+            POINT ck[3] = { { bx + side / 5,     by + side / 2     },
+                            { bx + side * 2 / 5, by + side * 7 / 10 },
+                            { bx + side * 4 / 5, by + side / 4     } };
+            SelectObject(hdc, g_chk_pen);
+            Polyline(hdc, ck, 3);
+            SelectObject(hdc, g_net_pen);
+        }
+        /* the net's font is sized for a face letter; a caption takes the panel's */
+        HGDIOBJ of = SelectObject(hdc, g_font);
+        RECT tr = ar;
+        tr.left = bx + side + SZ(6);
+        SetTextColor(hdc, RGB(0x20, 0x20, 0x20));
+        DrawText(hdc, AUTOCPL_TITLE, -1, &tr,
+                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        SelectObject(hdc, of);
+    }
+
     SelectObject(hdc, old_brush);
     SelectObject(hdc, old_font);
     SelectObject(hdc, old_pen);
     EndPaint(hw, &ps);
 }
 
-static void net_toggle_sticker(int fi, int r, int c)
+/* The one way a sticker reaches '?': 1 when the click hid it, 0 when it put a color back. */
+static int net_toggle_sticker(int fi, int r, int c)
 {
-    if (g.net[fi][r][c] != '?')
+    if (g.net[fi][r][c] != '?') {
         net_set(fi, r, c, '?');
-    else {
-        char was = g_net_last[fi][r][c];
-        net_set(fi, r, c, memchr(FACES, was, 6) ? was : FACES[fi]);
+        return 1;
     }
+    char was = g_net_last[fi][r][c];
+    net_set(fi, r, c, memchr(FACES, was, 6) ? was : FACES[fi]);
+    return 0;
 }
 
 static void canvas_click(HWND hw, int mx, int my, int rmb)
@@ -275,7 +331,8 @@ static void canvas_click(HWND hw, int mx, int my, int rmb)
                 if (mx >= x && mx < x + A && my >= y && my < y + A) {
                     /* the center names the frame: painting it would write a cube that is not one */
                     if (r == 1 && c == 1) return;
-                    if (rmb) net_toggle_sticker(fi, r, c);
+                    int hid = 0;
+                    if (rmb) hid = net_toggle_sticker(fi, r, c);
                     else net_set(fi, r, c, FACES[g.curcol]);
                     InvalidateRect(hw, NULL, TRUE);
                     char def[55];
@@ -283,6 +340,8 @@ static void canvas_click(HWND hw, int mx, int my, int rmb)
                     SetWindowText(g.cubestring, def);
                     input_hint(NULL, 0);        /* no EN_CHANGE from a click: the hint is ours */
                     net_status();
+                    /* a color is a change to answer; a '?' the user made is already an answer */
+                    if (!hid) autocpl_run();
                     return;
                 }
             }
@@ -296,6 +355,13 @@ static void canvas_click(HWND hw, int mx, int my, int rmb)
             InvalidateRect(hw, NULL, TRUE);
             return;
         }
+    }
+    RECT ar = autocpl_rect();
+    if (!rmb && mx >= ar.left && mx < ar.right && my >= ar.top && my < ar.bottom) {
+        g.autocpl = !g.autocpl;
+        InvalidateRect(hw, NULL, TRUE);
+        /* a tick answers the cube in the box now, not only the next color painted */
+        autocpl_run();
     }
 }
 

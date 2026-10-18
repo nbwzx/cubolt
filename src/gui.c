@@ -52,7 +52,7 @@ static volatile double g_build_secs;
 
 /* ---- control ids ---- */
 enum {
-    ID_SCRAMBLE = 1, ID_CUBESTR, ID_RESETCS, ID_SUB_FIRST,
+    ID_SCRAMBLE = 1, ID_CUBESTR, ID_RESETCS, ID_CLEARCS, ID_SUB_FIRST,
     /* one command id per subgroup letter, then ID_DEPTH */
     ID_SUB_LAST = ID_SUB_FIRST + 17, ID_DEPTH, ID_ONLYOPT, ID_SORT,
     ID_SOLVE, ID_STOP, ID_LIST, ID_LOG, ID_COPYSEL, ID_COPYALL, ID_CLEARLOG,
@@ -83,6 +83,10 @@ static const char FACES[7] = FACE_LET;
 #define CS_STICKERS 54
 #define DEPTH_CHARS 15
 #define MONO_FACE "Consolas"
+/* Clear leaves the six centers: the frame their letters name */
+static const char CUBE_CLEARED[] =
+    "????U????" "????R????" "????F????" "????D????" "????L????" "????B????";
+_Static_assert(sizeof CUBE_CLEARED == CS_STICKERS + 1, "a cleared cube is no longer 54 stickers");
 /* the cubestring the boxes start from is the same length the boxes will hold */
 _Static_assert(sizeof CUBE_SOLVED == CS_STICKERS + 1, "a cubestring is no longer 54 stickers");
 
@@ -93,6 +97,7 @@ static HFONT g_font = NULL;
 static HFONT g_mono_font = NULL;
 static HPEN   g_net_pen = NULL;
 static HPEN   g_mark_pen = NULL;
+static HPEN   g_chk_pen = NULL;
 static HFONT  g_net_font = NULL;
 static HFONT  g_list_font = NULL;  /* the listbox' monospace face, kept so WM_DESTROY frees it */
 static HBRUSH g_face_brush[7];    /* one per face letter, then the gray fallback */
@@ -258,6 +263,7 @@ typedef struct {
     int      curcol;             /* 0..5 index into FACES */
     int      net_bad;
     int      hint_bad;           /* the input hint is carrying an error, not just progress */
+    int      autocpl;            /* the Auto complete box under the net is ticked */
     int      only_optimal;
     int      sort_solutions;
     int      busy;
@@ -1265,6 +1271,8 @@ static void build_ui(HWND hw, HINSTANCE hinst)
 
     g.canvas = CreateWindow(CANVAS_CLASS, NULL, WS_CHILD | WS_VISIBLE,
                             SZ(8), SZ(8), cw, chh, hw, NULL, hinst, NULL);
+    /* ticked to begin with: the laws answer as the user paints, unless he unticks it */
+    g.autocpl = 1;
 
     /* its color is set in WM_CTLCOLORSTATIC, not here */
     g.netstatus = mkf(0, "STATIC", NET_OK_TEXT, SS_LEFT,
@@ -1313,10 +1321,12 @@ static void build_ui(HWND hw, HINSTANCE hinst)
         center_edit_v(g.cubestring);
         SetWindowSubclass(g.cubestring, cs_sub, 0, 0);
     }
-    /* Reset puts the definition (and, live, the net) back to solved; the hint beside it speaks */
-    mkf(0, "BUTTON", "Reset", 0, x, SZ(110), SZ(160), SZ(26), hw, ID_RESETCS);
+    /* Clear leaves the six centers; Reset puts the definition (and, live, the net) back to
+       solved.  The hint beside them speaks for whichever ran. */
+    mkf(0, "BUTTON", "Clear", 0, x, SZ(110), SZ(110), SZ(26), hw, ID_CLEARCS);
+    mkf(0, "BUTTON", "Reset", 0, x + SZ(118), SZ(110), SZ(110), SZ(26), hw, ID_RESETCS);
     g.inphint = mkf(0, "STATIC", "", SS_LEFT,
-                    x + SZ(168), SZ(116), SZ(PANEL_W) - SZ(168), SZ(18), hw, ID_INPHINT);
+                    x + SZ(246), SZ(116), SZ(PANEL_W) - SZ(246), SZ(18), hw, ID_INPHINT);
 
     mkf(0, "STATIC", "Subgroup", 0, x, SZ(146), SZ(90), SZ(18), hw, 0);
     for (int i = 0; i < SUBGROUP_N; i++) {
@@ -1398,6 +1408,8 @@ static void build_ui(HWND hw, HINSTANCE hinst)
     /* made once for the window: a drag stutters if these are made per WM_PAINT */
     g_net_pen  = CreatePen(PS_SOLID, 1, RGB(0x33, 0x33, 0x33));
     g_mark_pen = CreatePen(PS_SOLID, 4, RGB(0, 0, 0));
+    /* the tick in the Auto complete box, in the accent the Solve button carries */
+    g_chk_pen  = CreatePen(PS_SOLID, SZ(2), BTN_BASE[1]);
     g_net_font = CreateFont(-SZ(15), 0, 0, 0, FW_BOLD, 0, 0, 0,
                             DEFAULT_CHARSET, 0, 0, 0, 0, "Arial");
     for (int i = 0; i < 7; i++) g_face_brush[i] = CreateSolidBrush(face_color(FACES[i]));
@@ -1711,11 +1723,12 @@ static LRESULT CALLBACK MainProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         switch (id) {
+        case ID_CLEARCS:
         case ID_RESETCS:
             /* an old scramble would disagree with the net */
             input_hint(NULL, 0);
             SetWindowText(g.scramble, "");
-            show_cs(CUBE_SOLVED);
+            show_cs(id == ID_CLEARCS ? CUBE_CLEARED : CUBE_SOLVED);
             break;
         case ID_SCRAMBLE:
             /* live: the box, the picture and Solve agree; an unreadable move goes to the hint */
@@ -1996,6 +2009,7 @@ static LRESULT CALLBACK MainProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
             if (g_face_brush[i]) DeleteObject(g_face_brush[i]);
         if (g_net_pen)  DeleteObject(g_net_pen);
         if (g_mark_pen) DeleteObject(g_mark_pen);
+        if (g_chk_pen)  DeleteObject(g_chk_pen);
         if (g_net_font) DeleteObject(g_net_font);
         if (g_font)      DeleteObject(g_font);
         if (g_mono_font) DeleteObject(g_mono_font);
@@ -2073,8 +2087,18 @@ static int self_test(void)
     if (ic_ok) fprintf(out, "incomplete self-test: %s\n", rend_text(rend_nth(0)));
     else fprintf(out, "incomplete self-test failed (rc=%d, %zu solution(s))\n",
                  rc, rend_on);
+
+    /* the Auto complete box on one hidden sticker: the laws leave the solved color */
+    char hidden[55], filled[55];
+    memcpy(hidden, CUBE_SOLVED, 55);
+    hidden[0] = '?';
+    int nfill = ic_complete(hidden, filled);
+    int ac_ok = nfill == 1 && strcmp(filled, CUBE_SOLVED) == 0;
+    if (ac_ok) fprintf(out, "auto complete self-test: %d sticker(s)\n", nfill);
+    else fprintf(out, "auto complete self-test failed (%d sticker(s) -> %s)\n", nfill, filled);
+
     if (fclose(out)) return 4;
-    return (bad || !ic_ok) ? 3 : 0;
+    return (bad || !ic_ok || !ac_ok) ? 3 : 0;
 }
 
 /* ---- headless layout check ---- */

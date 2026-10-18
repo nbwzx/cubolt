@@ -95,10 +95,8 @@ static const char *batch_case_cube(const JVal *c, int f[54], BatchCase *out,
     out->scr  = cube ? NULL : scr;
     out->cs[0] = 0;
     if (!cube) return NULL;
-    /* '?' is none of from_string's colors, so a wildcard cube is the incomplete side's to read */
     const char *bad = "it is not 54 facelets";
-    if (strlen(cube) == 54)
-        bad = strchr(cube, '?') ? incomp_problem(cube, NULL, NULL, NULL) : from_string(cube, f);
+    if (strlen(cube) == 54) bad = cs_problem(cube, f);
     if (bad) {
         snprintf(why, sizeof why, "not a valid cubestring: %s", cube);
         return why;

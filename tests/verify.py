@@ -192,7 +192,8 @@ def gui():
     else:
         note("gui --selftest", "rc=0")
     answer = read_file(os.path.join(BIN, "_selftest.out"))
-    want = ["self-test: 1 standard solution(s)", "  R U' R'", "incomplete self-test: R U' R'"]
+    want = ["self-test: 1 standard solution(s)", "  R U' R'", "incomplete self-test: R U' R'",
+            "auto complete self-test: 1 sticker(s)"]
     if answer.strip().splitlines() != want:
         bad("gui --selftest answer", "the file does not hold the three lines it should")
         print("\n".join(head(answer, 4)) if answer.strip() else "(empty)")

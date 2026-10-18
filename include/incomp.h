@@ -24,7 +24,6 @@ typedef struct {
 
 static Cube ic_members[IC_K_CAP];
 static int  ic_nmembers;
-static int  ic_mem_cap;
 static InCube ic_in;                          /* the parse the search and the enumeration run on */
 
 /* Slot i holds cubie j in orientation o; one candidate is enough for a partial corner. */
@@ -160,75 +159,79 @@ static const char *ic_parse(const char *s, InCube *r)
     return NULL;
 }
 
-/* One candidate member: only the global laws are left, even flip sum and agreeing parities. */
-static void ic_record_member(const int cp[8], const int co[8], const int ep[12], const int eo[12])
+/* ---- walking the completions ---- */
+/* One member at a time: ic_expand wants them all, Auto complete only what they agree on.  The
+   state travels with the walk, so the GUI can hold one while a search holds its own. */
+typedef struct {
+    const InCube *in;
+    Cube *dst;                            /* where the members go */
+    int cap;                              /* stop this many members in */
+    long budget;                          /* nodes left to seat; negative for no counting */
+    int n, stop;                          /* members written; stop: the walk was cut short */
+    const unsigned char *cord, *eord;     /* order to seat in; NULL for ascending */
+    int cp[8], co[8], ep[12], eo[12];
+} IcSeat;
+
+/* The (cubie, orientation) pairs a position still allows: bit id*3+ori, or id*2+flip. */
+static unsigned ic_pairs(const InCube *in, int corner, int i)
 {
-    if (ic_nmembers >= ic_mem_cap) return;
-
-    int esum = 0;
-    for (int i = 0; i < 12; i++) esum += eo[i];
-    if (esum & 1) return;
-    if ((perm_parity(cp, 8) ^ perm_parity(ep, 12)) & 1) return;
-
-    Cube c;
-    for (int i = 0; i < 8;  i++) { c.cp[i] = (s8)cp[i]; c.co[i] = (s8)co[i]; }
-    for (int i = 0; i < 12; i++) { c.ep[i] = (s8)ep[i]; c.eo[i] = (s8)eo[i]; }
-    ic_members[ic_nmembers++] = c;
+    if (corner)
+        return in->kfull_c[i] ? 1u << (in->cp[i] * 3 + in->co[i])
+             : in->kc[i] ? (unsigned)in->pc_pair[i] : 0xFFFFFFu;
+    return in->kfull_e[i] ? 1u << (in->ep[i] * 2 + in->eo[i])
+         : in->ke[i] ? (unsigned)in->pe_pair[i] : 0xFFFFFFu;
 }
 
-static int ic_pe_pos[12];                     /* the not-fully-known edge positions, ascending */
-static int ic_npe;
-
-/* A not-fully-known edge position: (id, flip) from its pair set, or the whole 12 x 2 if wiped. */
-static void ic_recurse_edge(int t, const int cp[8], const int co[8],
-                            int ep[12], int eo[12], int used)
+/* Room for one more node?  stop tells the caller which of the two ways the walk ended. */
+static int ic_done(IcSeat *w)
 {
-    if (ic_nmembers >= ic_mem_cap) return;
-    if (t == ic_npe) { ic_record_member(cp, co, ep, eo); return; }
-    int i = ic_pe_pos[t];
+    if (w->n < w->cap && (w->budget < 0 || w->budget-- > 0)) return 0;
+    w->stop = 1;
+    return 1;
+}
+
+static void ic_seat_edge(IcSeat *w, int k, int used, int flips)
+{
+    if (ic_done(w)) return;
+    if (k == 12) {
+        /* even flip sum and agreeing parities are the only laws left */
+        if (!(flips & 1) && !((perm_parity(w->cp, 8) ^ perm_parity(w->ep, 12)) & 1)) {
+            Cube c;
+            for (int i = 0; i < 8;  i++) { c.cp[i] = (s8)w->cp[i]; c.co[i] = (s8)w->co[i]; }
+            for (int i = 0; i < 12; i++) { c.ep[i] = (s8)w->ep[i]; c.eo[i] = (s8)w->eo[i]; }
+            w->dst[w->n++] = c;
+        }
+        return;
+    }
+    int pos = w->eord ? w->eord[k] : k;
+    unsigned pairs = ic_pairs(w->in, 0, pos);
     for (int j = 0; j < 12; j++) {
-        if (used & (1 << j)) continue;
-        int flips = ic_in.ke[i] ? (ic_in.pe_pair[i] >> (j * 2)) & 3 : 3;
+        if (used >> j & 1) continue;
         for (int f = 0; f < 2; f++) {
-            if (!(flips >> f & 1)) continue;
-            ep[i] = j; eo[i] = f;
-            ic_recurse_edge(t + 1, cp, co, ep, eo, used | (1 << j));
-            if (ic_nmembers >= ic_mem_cap) return;
+            if (!(pairs >> (j * 2 + f) & 1)) continue;
+            w->ep[pos] = j; w->eo[pos] = f;
+            ic_seat_edge(w, k + 1, used | 1 << j, flips + f);
+            if (w->stop) return;
         }
     }
 }
 
-/* Per position its sticker pairs, or all 8 x 3 at a wiped one; twist sum off 3 goes no further. */
-static void ic_recurse_corner(int pos, int cp[8], int co[8], int used, int co_sum)
+static void ic_seat_corner(IcSeat *w, int k, int used, int tw)
 {
-    if (ic_nmembers >= ic_mem_cap) return;
-    if (pos == 8) {
-        if (co_sum % 3) return;
-        int ep[12], eo[12], used_e = 0;
-        for (int i = 0; i < 12; i++) {
-            if (ic_in.kfull_e[i]) {
-                ep[i] = ic_in.ep[i]; eo[i] = ic_in.eo[i];
-                used_e |= 1 << ic_in.ep[i];
-            } else { ep[i] = -1; eo[i] = 0; }
-        }
-        ic_recurse_edge(0, cp, co, ep, eo, used_e);
+    if (ic_done(w)) return;
+    if (k == 8) {
+        if (!(tw % 3)) ic_seat_edge(w, 0, 0, 0);   /* the twists of a whole cube sum to zero */
         return;
     }
-    if (ic_in.kfull_c[pos]) {
-        int j = ic_in.cp[pos];
-        if (used & (1 << j)) return;
-        cp[pos] = j; co[pos] = ic_in.co[pos];
-        ic_recurse_corner(pos + 1, cp, co, used | (1 << j), co_sum + ic_in.co[pos]);
-        return;
-    }
+    int pos = w->cord ? w->cord[k] : k;
+    unsigned pairs = ic_pairs(w->in, 1, pos);
     for (int j = 0; j < 8; j++) {
-        if (used & (1 << j)) continue;
-        int twists = ic_in.kc[pos] ? (ic_in.pc_pair[pos] >> (j * 3)) & 7 : 7;
-        for (int oi = 0; oi < 3; oi++) {
-            if (!(twists >> oi & 1)) continue;
-            cp[pos] = j; co[pos] = oi;
-            ic_recurse_corner(pos + 1, cp, co, used | (1 << j), co_sum + oi);
-            if (ic_nmembers >= ic_mem_cap) return;
+        if (used >> j & 1) continue;
+        for (int o = 0; o < 3; o++) {
+            if (!(pairs >> (j * 3 + o) & 1)) continue;
+            w->cp[pos] = j; w->co[pos] = o;
+            ic_seat_corner(w, k + 1, used | 1 << j, tw + o);
+            if (w->stop) return;
         }
     }
 }
@@ -236,13 +239,9 @@ static void ic_recurse_corner(int pos, int cp[8], int co[8], int used, int co_su
 /* Every consistent cube, member 0 the canonical fill; cap 1 for run_incomplete, else IC_K_CAP. */
 static void ic_enum_members(int cap)
 {
-    ic_mem_cap = cap;
-    ic_nmembers = 0;
-    ic_npe = 0;
-    for (int i = 0; i < 12; i++)
-        if (!ic_in.kfull_e[i]) ic_pe_pos[ic_npe++] = i;
-    int cp[8], co[8];
-    ic_recurse_corner(0, cp, co, 0, 0);
+    IcSeat w = { .in = &ic_in, .dst = ic_members, .cap = cap, .budget = -1 };
+    ic_seat_corner(&w, 0, 0, 0);
+    ic_nmembers = w.n;
 }
 
 /* Counted over an (ids used, ori sum, parity) memo, not walked. */
@@ -258,7 +257,8 @@ typedef struct { int id, ori; } IcCand;
 
 static unsigned long long ic_iter_fill(int depth, int mask, int ori, int parity,
                                        const IcCand *cd, const int *ncd, int npos, int nuni,
-                                       unsigned long long *memo, unsigned char *seen)
+                                       unsigned long long *memo, unsigned char *seen,
+                                       unsigned long long limit)
 {
     int key = (mask * nuni + ori) * 2 + parity;
     if (seen[key]) return memo[key];
@@ -274,8 +274,9 @@ static unsigned long long ic_iter_fill(int depth, int mask, int ori, int parity,
             /* seating `piece` here inverts it with every id already seated that outranks it */
             cnt += ic_iter_fill(depth + 1, mask | 1 << piece, (ori + row[i].ori) % nuni,
                                 parity ^ (__builtin_popcount((unsigned)(mask >> piece)) & 1),
-                                cd, ncd, npos, nuni, memo, seen);
-            if (cnt >= IC_CNT_SAT) { cnt = IC_CNT_SAT; break; }
+                                cd, ncd, npos, nuni, memo, seen, limit);
+            /* asking only whether any cube is left, the first one found answers */
+            if (cnt >= limit) { cnt = limit; break; }
         }
     }
     seen[key] = 1;
@@ -283,7 +284,8 @@ static unsigned long long ic_iter_fill(int depth, int mask, int ori, int parity,
     return cnt;
 }
 
-static unsigned long long ic_count_members(const InCube *in, int *ok)
+/* Counted up to `limit`: a caller that only asks whether any cube is left stops at the first. */
+static unsigned long long ic_count_members(const InCube *in, int *ok, unsigned long long limit)
 {
     IcCand cd[12][IC_CAND];
     int ncd[12];
@@ -312,7 +314,7 @@ static unsigned long long ic_count_members(const InCube *in, int *ok)
     }
     for (int p = 0; p < 2; p++) {
         memset(seen, 0, IC_CNT_MEMO);
-        c[p] = ic_iter_fill(0, 0, 0, p, &cd[0][0], ncd, 8, 3, memo, seen);
+        c[p] = ic_iter_fill(0, 0, 0, p, &cd[0][0], ncd, 8, 3, memo, seen, limit);
     }
 
     for (int i = 0; i < 12; i++) {
@@ -327,13 +329,13 @@ static unsigned long long ic_count_members(const InCube *in, int *ok)
     }
     for (int p = 0; p < 2; p++) {
         memset(seen, 0, IC_CNT_MEMO);
-        e[p] = ic_iter_fill(0, 0, 0, p, &cd[0][0], ncd, 12, 2, memo, seen);
+        e[p] = ic_iter_fill(0, 0, 0, p, &cd[0][0], ncd, 12, 2, memo, seen, limit);
     }
 
     /* the halves are independent but for the parity they share; each counted its own sum */
     unsigned long long t = c[0] * e[0] + c[1] * e[1];
     free(memo); free(seen);
-    return t >= IC_CNT_SAT ? IC_CNT_SAT : t;
+    return t >= limit ? limit : t;
 }
 
 /* Why `s` is unusable, or NULL; nkc/nke/npart are set either way, and any may be NULL. */
@@ -352,13 +354,110 @@ static const char *incomp_problem(const char *s, int *nkc, int *nke, int *npart)
     return err;
 }
 
-/* How many cubes the stickers leave: the panel's number. */
-static unsigned long long incomp_count(const char *s, int *ok) __attribute__((unused));
-static unsigned long long incomp_count(const char *s, int *ok)
+/* '?' is none of from_string's colors, so a wildcard cube is the incomplete side's to read */
+static const char *cs_problem(const char *s, int f[54]) __attribute__((unused));
+static const char *cs_problem(const char *s, int f[54])
+{
+    return strchr(s, '?') ? incomp_problem(s, NULL, NULL, NULL) : from_string(s, f);
+}
+
+/* How many cubes the stickers leave: the panel's number; counts no further than `limit`. */
+static unsigned long long incomp_count(const char *s, int *ok, unsigned long long limit)
+    __attribute__((unused));
+static unsigned long long incomp_count(const char *s, int *ok, unsigned long long limit)
 {
     InCube r;
     if (ic_parse(s, &r)) { if (ok) *ok = 0; return 0; }
-    return ic_count_members(&r, ok);
+    return ic_count_members(&r, ok, limit);
+}
+
+/* Another color possible on facelet `f`?  Drop the pairs that show `but` there, then count. */
+static int ic_color_elsewhere(const InCube *in, int f, int but)
+{
+    for (int edge = 0; edge < 2; edge++) {
+        int np = edge ? 12 : 8, no = edge ? 2 : 3;   /* positions; orientations apiece */
+        for (int i = 0; i < np; i++)
+            for (int s = 0; s < no; s++) {
+                if ((edge ? EDGE_FACELET[i][s] : CORNER_FACELET[i][s]) != f) continue;
+                unsigned keep = ic_pairs(in, !edge, i);
+                for (int j = 0; j < np; j++)
+                    for (int o = 0; o < no; o++)
+                        if ((edge ? EDGE_COLOR[j][s ^ o]
+                                  : CORNER_COLOR[j][(s - o + 3) % 3]) == but)
+                            keep &= ~(1u << (j * no + o));
+                if (!keep) return 0;
+                InCube t = *in;
+                int ok = 1;
+                if (edge) { t.ke[i] = 1; t.pe_pair[i] = (int)keep; }
+                else      { t.kc[i] = 1; t.pc_pair[i] = (int)keep; }
+                unsigned long long n = ic_count_members(&t, &ok, 1);
+                return ok && n > 0;
+            }
+    }
+    return 0;
+}
+
+/* ---- what a '?' cube leaves fixed ---- */
+#define IC_AC_CAP   128      /* completions to look at before any counting */
+#define IC_AC_NODES 300000   /* nodes one walk may spend: past that the count decides */
+
+/* The most constrained position first: the same walk, but a branch that cannot be finished
+   dies near the top, where it costs a few placements instead of a subtree. */
+static void ic_ac_order(const InCube *in, int corner, unsigned char *ord, int n)
+{
+    for (int i = 0; i < n; i++) {
+        int c = __builtin_popcount(ic_pairs(in, corner, i)), j = i;
+        while (j > 0 && __builtin_popcount(ic_pairs(in, corner, ord[j - 1])) > c) {
+            ord[j] = ord[j - 1];
+            j--;
+        }
+        ord[j] = i;
+    }
+}
+
+/* Fill every '?' the laws of the cube force; how many were filled, -1 when the input is not one. */
+static int ic_complete(const char *in, char *out) __attribute__((unused));
+static int ic_complete(const char *in, char *out)
+{
+    InCube r;
+    if (ic_parse(in, &r)) return -1;
+    strcpy(out, in);
+
+    /* Two completions that disagree settle a facelet with no counting at all; the count answers
+       only where the walk stayed in doubt. */
+    Cube seen[IC_AC_CAP];
+    IcSeat w = { .in = &r, .dst = seen, .cap = IC_AC_CAP, .budget = IC_AC_NODES };
+    unsigned char cord[8], eord[12];
+    ic_ac_order(&r, 1, cord, 8);
+    ic_ac_order(&r, 0, eord, 12);
+    w.cord = cord; w.eord = eord;
+    ic_seat_corner(&w, 0, 0, 0);
+    if (!w.n) return 0;                  /* no completion here: nothing the laws fix */
+
+    unsigned char shown[54] = {0};    /* per facelet: a color a completion showed sets its bit */
+    for (int k = 0; k < w.n; k++) {
+        const Cube *m = &seen[k];
+        for (int i = 0; i < 8; i++)
+            for (int t = 0; t < 3; t++)
+                shown[CORNER_FACELET[i][t]] |=
+                    (unsigned char)(1u << CORNER_COLOR[m->cp[i]][(t - m->co[i] + 3) % 3]);
+        for (int i = 0; i < 12; i++)
+            for (int t = 0; t < 2; t++)
+                shown[EDGE_FACELET[i][t]] |=
+                    (unsigned char)(1u << EDGE_COLOR[m->ep[i]][t ^ m->eo[i]]);
+    }
+
+    int filled = 0;
+    for (int f = 0; f < 54; f++) {
+        if (out[f] != '?') continue;
+        int b = shown[f];
+        if (b & (b - 1)) continue;       /* two completions disagree, so nothing is forced */
+        /* A walk cut short may have missed the second color; the count goes looking for it. */
+        if (w.stop && ic_color_elsewhere(&r, f, __builtin_ctz(b))) continue;
+        out[f] = in[9 * __builtin_ctz(b) + 4];
+        filled++;
+    }
+    return filled;
 }
 
 /* A '?' cube takes one path or the other by engine.h's rule; run_incomplete is the relaxed one. */
@@ -375,7 +474,7 @@ static int ic_expand(const char *in, char out[][55])
 
     /* counted before walked: eight wiped corners leave 44 million; the walk stops at IC_K_CAP */
     int ok = 1;
-    if (ic_count_members(&r, &ok) > (unsigned long long)IC_K_CAP) {
+    if (ic_count_members(&r, &ok, IC_K_CAP + 1) > (unsigned long long)IC_K_CAP) {
         if (!ok) {
             ic_count_oom = 1;
             fprintf(stderr, "warning: the completions could not be counted (out of memory); "

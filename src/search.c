@@ -68,6 +68,8 @@ static void usage(FILE *f)
         "  --solhash  hash the run's solutions and print the sum: with --bench it fills the\n"
         "           row's solhash column.  Off by default.\n"
         "  --print  print the cubestring the algorithm leaves, and nothing else\n"
+        "  --complete <cubestring>  fill every '?' the laws of the cube force and print it:\n"
+        "           a sticker no legal completion can vary is written, the rest stay '?'\n"
         "  --scramble-list <file>  one cubestring per line of algorithms, in one process:\n"
         "           a bad line answers ! <why> on that line\n"
         "  --bench  a file of cases, one line each: <name> <depth> <subgroup>\n"
@@ -329,14 +331,16 @@ int main(int argc, char **argv)
     int n = split_scramble(tok, ntok, 1, &scr, &serr);
     if (n < 0) { fprintf(stderr, "%s\n", serr); return 1; }
 
-    int print_mode = 0, list_mode = 0, json_mode = 0, pend_outdir = 0, cs_given = 0;
-    const char *listpath = NULL, *jsonpath = NULL, *outdir = NULL;
+    int print_mode = 0, list_mode = 0, json_mode = 0, complete_mode = 0;
+    int pend_outdir = 0, cs_given = 0;
+    const char *listpath = NULL, *jsonpath = NULL, *cspath = NULL, *outdir = NULL;
     int w = 0;
     for (int i = 0; i < n; i++) {
         if (!strcmp(tok[i], "--cubestring")) cs_given = 1;
         if (!strcmp(tok[i], "--print")) print_mode = 1;
         else if (!strcmp(tok[i], "--scramble-list")) list_mode = 1;
         else if (!strcmp(tok[i], "--json")) json_mode = 1;
+        else if (!strcmp(tok[i], "--complete")) complete_mode = 1;
         else if (!strcmp(tok[i], "--out")) pend_outdir = 1;
         else if (pend_outdir) {
             if (tok[i][0] == '-') break;    /* left pending, so the check reports it */
@@ -350,6 +354,7 @@ int main(int argc, char **argv)
         else if (flag_wants_value(tok[i]) && i + 1 < n) { tok[w++] = tok[i]; tok[w++] = tok[++i]; }
         else if (list_mode && !listpath && tok[i][0] != '-') listpath = tok[i];
         else if (json_mode && !jsonpath && tok[i][0] != '-') jsonpath = tok[i];
+        else if (complete_mode && !cspath && tok[i][0] != '-') cspath = tok[i];
         else tok[w++] = tok[i];
     }
     n = w;
@@ -357,9 +362,11 @@ int main(int argc, char **argv)
     if (pend_outdir) { fprintf(stderr, "--out needs a directory\n"); return 1; }
     if (list_mode && !listpath) { fprintf(stderr, "--scramble-list needs a file\n"); return 1; }
     if (json_mode && !jsonpath) { fprintf(stderr, "--json needs a case file\n"); return 1; }
+    if (complete_mode && !cspath) { fprintf(stderr, "--complete needs a cubestring\n"); return 1; }
     /* each mode reads its own file and returns: a second one would be swallowed without a word */
-    if (!!list_mode + !!json_mode + !!print_mode > 1) {
-        fprintf(stderr, "--scramble-list, --json and --print are three modes: give one\n");
+    if (!!list_mode + !!json_mode + !!print_mode + !!complete_mode > 1) {
+        fprintf(stderr, "--scramble-list, --json, --print and --complete are four modes: "
+                        "give one\n");
         return 1;
     }
     /* --out names the directory --json writes into; the other two print and file nothing */
@@ -425,6 +432,17 @@ int main(int argc, char **argv)
         const char *err = cube_scramble(scr, cs);
         if (err) { fprintf(stderr, "%s: %s\n", scr, err); return 1; }
         printf("%s\n", cs);
+        return 0;
+    }
+
+    if (complete_mode) {
+        char out[55];
+        int nfill = ic_complete(cspath, out);
+        if (nfill < 0) {
+            fprintf(stderr, "%s\n", incomp_problem(cspath, NULL, NULL, NULL));
+            return 1;
+        }
+        printf("%s\n", out);
         return 0;
     }
 

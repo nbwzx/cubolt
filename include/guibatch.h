@@ -282,9 +282,7 @@ static unsigned __stdcall batch_worker(void *ctx)
             const char *bad = NULL;
             int have_cs = 0;
             if (strlen(rest) == 54) {
-                /* '?' is the incomplete side, anything else a plain cube string */
-                bad = strchr(rest, '?') ? incomp_problem(rest, NULL, NULL, NULL)
-                                        : from_string(rest, f);
+                bad = cs_problem(rest, f);
                 if (!bad) {
                     strcpy(cs, rest);
                     have_cs = 1;
