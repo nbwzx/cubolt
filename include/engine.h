@@ -506,9 +506,11 @@ static void search(Thr *th, int UD_flip, int RL_flip, int FB_flip,
         }
     }
 
-    /* Every gate above compares against togo, so a state that gets here with none left is home. */
+    /* The root reaches togo 0 with no gate having looked at its corners: the three axes read only
+       (slice, flip, twist), so a corner permutation still marks an unsolved cube. */
     if (togo == 0) {
-        emit_solution(th);
+        if (corners == 0)
+            emit_solution(th);
         return;
     }
 
