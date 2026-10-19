@@ -268,14 +268,6 @@ static inline u32 *clssym_step(int ss, int flip, int col)
     return &clssym[(size_t)N_FLIP * ss_move[N_MOVE * ss + col] + flip_move[N_MOVE * flip + col]];
 }
 
-/* One axis of the phase-1 bound: the child's flip and slice come back through f1/s1. */
-static inline int axis_step(int ss, int flip, int d, int col, int t1, int *f1, int *s1)
-{
-    *f1 = flip_move[N_MOVE * flip + col];
-    *s1 = ss_move[N_MOVE * ss + col];
-    return dist_tab[3 * d + fsst_get(fsst_index(*s1, *f1, t1))];
-}
-
 /* list position -> column, the column on the other two axes, its cost: a list fits N_MOVE */
 static int mv_col[N_MOVE], mv_mrl[N_MOVE], mv_mfb[N_MOVE];
 /* Two moves of a group are one move apart, so one out of reach takes its group with it. */
@@ -473,6 +465,22 @@ static void emit_solution(Thr *th)
     emit_record(th->sp, &th->nsol, &th->solhash, tok);
 }
 
+/* P holds every child's table indices for the pass that reads them, R the children that
+   survived the gates.  Both belong to the call: the workers run search() at once. */
+struct PNode {
+    int mrl, mfb;
+    unsigned nrho;
+    int nacc, pass;
+    int c1, ut1, rt1, ft1;
+    int uf1, rf1, ff1, us1, rs1, gs1;
+    u32 ct_idx, cls_ud, cls_rl, cls_fb, fs_ud, fs_rl, fs_fb;
+};
+
+struct RNode {
+    int j, uf1, rf1, ff1, ut1, rt1, ft1, us1, rs1, gs1, c1, ud1, rl1, fb1, nacc;
+    unsigned nrho;
+};
+
 static void search(Thr *th, int UD_flip, int RL_flip, int FB_flip,
                    int UD_twist, int RL_twist, int FB_twist,
                    int UD_ss, int RL_ss, int FB_ss, int corners,
@@ -518,64 +526,103 @@ static void search(Thr *th, int UD_flip, int RL_flip, int FB_flip,
     int sp = th->sp;
     long long nodes = th->nodecount;
 
-    for (int i = 0; i < nmoves_in; i++) {
-        int col = mv_col[i];
+    /* The index work in two passes, split by dependency level: an fsst index needs its
+       clssym class first, so the classes are all asked for before any of them is read.
+       pass is what the cheap checks decided: 0 gates it, 1 the ban list closed it, 2 the
+       STM floor closed it after the node was counted. */
+    struct PNode P[N_MOVE];
+    int np = 0;
+    for (int j = 0; j < nmoves_in; j++) {
+        int col = mv_col[j];
+        unsigned nrho = child_open(banmask, j, rhos);
+        if (!nrho) { P[j].pass = 1; continue; }
+        int nacc = stm_child_std(acc_std, j, togo);
+        P[j].pass = nacc < 0 ? 2 : 0;
+        if (nacc < 0) continue;
+        P[j].mrl = mv_mrl[j]; P[j].mfb = mv_mfb[j];
+        P[j].nrho = nrho; P[j].nacc = nacc;
 
-        unsigned nrho = child_open(banmask, i, rhos);
-        if (!nrho)
-            continue;
-
-        nodes++;
-        /* Ahead of the gates on purpose: a candidate the floor turns away should not pay them. */
-        int nacc = stm_child_std(acc_std, i, togo);
-        if (nacc < 0)
-            continue;
-        int c1 = corners_move[N_MOVE * corners + col];
-        /* the UD class the ct gate reads: asked now, so the gate covers the fetch */
-        __builtin_prefetch(clssym_step(UD_ss, UD_flip, col));
-        /* one lookup over two coordinates already carried, ahead of the three phase-1 gates */
+        int c1  = corners_move[N_MOVE * corners + col];
         int ut1 = twist_move[N_MOVE * UD_twist + col];
-        u32 ccs = ctclssym[c1];
-        /* ct reads the UD twist too, so it bounds this corner coordinate as well */
-        int g = CT_GET(ct_coord(ccs, ut1));
-        if (g >= togo)
-            goto give_up;
-        /* Independent axes: the two behind are asked while the one in front is on its way. */
-        int mrl = mv_mrl[i], mfb = mv_mfb[i];
+        P[j].c1 = c1; P[j].ut1 = ut1;
+        P[j].ct_idx = ct_coord(ctclssym[c1], ut1);
+
+        int mrl = P[j].mrl;
+        int rt1 = twist_move[N_MOVE * RL_twist + mrl];
+        int rf1 = flip_move[N_MOVE * RL_flip + mrl];
+        int rs1 = ss_move[N_MOVE * RL_ss + mrl];
+        P[j].rt1 = rt1; P[j].rf1 = rf1; P[j].rs1 = rs1;
+
+        int mfb = P[j].mfb;
+        int ft1 = twist_move[N_MOVE * FB_twist + mfb];
+        int ff1 = flip_move[N_MOVE * FB_flip + mfb];
+        int gs1 = ss_move[N_MOVE * FB_ss + mfb];
+        P[j].ft1 = ft1; P[j].ff1 = ff1; P[j].gs1 = gs1;
+
+        P[j].uf1 = flip_move[N_MOVE * UD_flip + col];
+        P[j].us1 = ss_move[N_MOVE * UD_ss + col];
+        __builtin_prefetch(clssym_step(UD_ss, UD_flip, col));
         __builtin_prefetch(clssym_step(RL_ss, RL_flip, mrl));
         __builtin_prefetch(clssym_step(FB_ss, FB_flip, mfb));
-        int uf1, us1;
-        int ud1 = axis_step(UD_ss, UD_flip, UD_d, col, ut1, &uf1, &us1);
+    }
+
+    for (int j = 0; j < nmoves_in; j++) {
+        if (P[j].pass) continue;
+        P[j].cls_ud = *clssym_step(UD_ss, UD_flip, mv_col[j]);
+        P[j].cls_rl = *clssym_step(RL_ss, RL_flip, P[j].mrl);
+        P[j].cls_fb = *clssym_step(FB_ss, FB_flip, P[j].mfb);
+        __builtin_prefetch(&ctdepth[P[j].ct_idx]);
+        P[j].fs_ud = ct_coord(P[j].cls_ud, P[j].ut1);
+        __builtin_prefetch(&fsst[P[j].fs_ud / 5]);
+        P[j].fs_rl = ct_coord(P[j].cls_rl, P[j].rt1);
+        __builtin_prefetch(&fsst[P[j].fs_rl / 5]);
+        P[j].fs_fb = ct_coord(P[j].cls_fb, P[j].ft1);
+        __builtin_prefetch(&fsst[P[j].fs_fb / 5]);
+    }
+
+    /* The gates in order, counting as the plain loop did: a group skip jumps the rest of the
+       face, and those moves never reached the counter above it. */
+    struct RNode R[N_MOVE];
+    for (int j = 0; j < nmoves_in; j++) {
+        if (P[j].pass == 1) continue;
+        nodes++;
+        if (P[j].pass == 2) continue;
+        int g = CT_GET(P[j].ct_idx);
+        if (g >= togo) { j = mv_grp_skip(j, g, togo); continue; }
+        int ud1 = dist_tab[3 * UD_d + fsst_get(P[j].fs_ud)];
         g = ud1;
-        if (ud1 >= togo)
-            goto give_up;
-        int rt1 = twist_move[N_MOVE * RL_twist + mrl];
-        int rf1, rs1;
-        int rl1 = axis_step(RL_ss, RL_flip, RL_d, mrl, rt1, &rf1, &rs1);
+        if (g >= togo) { j = mv_grp_skip(j, g, togo); continue; }
+        int rl1 = dist_tab[3 * RL_d + fsst_get(P[j].fs_rl)];
         g = rl1;
-        if (rl1 >= togo)
-            goto give_up;
-        int ft1 = twist_move[N_MOVE * FB_twist + mfb];
-        int ff1, gs1;
-        int fb1 = axis_step(FB_ss, FB_flip, FB_d, mfb, ft1, &ff1, &gs1);
+        if (g >= togo) { j = mv_grp_skip(j, g, togo); continue; }
+        int fb1 = dist_tab[3 * FB_d + fsst_get(P[j].fs_fb)];
         g = fb1;
-        if (fb1 >= togo)
-            goto give_up;
+        if (g >= togo) { j = mv_grp_skip(j, g, togo); continue; }
         /* trinomial prune */
         if (ud1 != 0 && ud1 == rl1 && rl1 == fb1) {
-            if (ud1 + 1 >= togo)
-                continue;
+            if (ud1 + 1 >= togo) continue;
         }
-        th->sofar[sp] = i;
+        R[np].j = j;
+        R[np].uf1 = P[j].uf1; R[np].rf1 = P[j].rf1; R[np].ff1 = P[j].ff1;
+        R[np].ut1 = P[j].ut1; R[np].rt1 = P[j].rt1; R[np].ft1 = P[j].ft1;
+        R[np].us1 = P[j].us1; R[np].rs1 = P[j].rs1; R[np].gs1 = P[j].gs1;
+        R[np].c1 = P[j].c1;
+        R[np].ud1 = ud1; R[np].rl1 = rl1; R[np].fb1 = fb1;
+        R[np].nacc = P[j].nacc; R[np].nrho = P[j].nrho;
+        np++;
+    }
+
+    /* The survivors, in order, once every table read above is done. */
+    for (int k = 0; k < np; k++) {
+        int j = R[k].j;
+        th->sofar[sp] = j;
         th->sp = sp + 1;
         th->nodecount = nodes;
-        search(th, uf1, rf1, ff1, ut1, rt1, ft1, us1, rs1, gs1, c1,
-               ud1, rl1, fb1, togo - 1, nacc, nrho, child_banmask(i, rhos));
+        search(th, R[k].uf1, R[k].rf1, R[k].ff1, R[k].ut1, R[k].rt1, R[k].ft1,
+                   R[k].us1, R[k].rs1, R[k].gs1, R[k].c1,
+                   R[k].ud1, R[k].rl1, R[k].fb1,
+                   togo - 1, R[k].nacc, R[k].nrho, child_banmask(j, rhos));
         nodes = th->nodecount;
-        continue;
-
-give_up:
-        i = mv_grp_skip(i, g, togo);
     }
     th->nodecount = nodes;
 }
