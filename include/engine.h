@@ -104,7 +104,7 @@ static char *tab_row;          /* the line the last job built; run_batch collect
 static volatile int engine_stop = 0;
 static volatile int opt_found   = 0;   /* --optimal: set once a rendering is absorbed */
 static int par_threads = 0;                 /* 0 = auto (the logical processor count), 1 = serial */
-static const long long par_min = 10000;     /* split only if the last pass was at least this big */
+static const long long par_min = 1000;       /* split only if the last pass was at least this big */
 static FILE *outfh;                         /* the same solution lines, to disk (Job.outpath) */
 /* The file's presence then means the case ran, not that it was solved. */
 static const char *outpath;
