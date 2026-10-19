@@ -159,22 +159,6 @@ static void warm_mapping(const void *view, size_t n)
     warm_sink = s;
 }
 
-/* Whether the mapping still answers from memory: a sample of pages, judged on its average. */
-#define WARM_PROBE_PAGES 64
-#define WARM_PROBE_HOT   6e-6            /* seconds a page may take and still count as kept */
-
-static int warm_is_hot(const void *view, size_t n)
-{
-    const unsigned char *p = (const unsigned char *)view;
-    size_t step = (n / WARM_PROBE_PAGES) & ~(size_t)4095;   /* n >= 64 MB, so a whole page each */
-    double t0 = now_sec();
-    volatile unsigned char s = 0;
-    for (size_t off = 0; off < n; off += step) s ^= p[off];
-    double took = now_sec() - t0;
-    warm_sink = (unsigned char)s;
-    return took < (double)WARM_PROBE_PAGES * WARM_PROBE_HOT;
-}
-
 /* Mapped, not copied: a case visits a fraction of phase1x24_prun; the length is checked by hand. */
 static void *load_file(const char *name)
 {
@@ -205,7 +189,7 @@ static void *load_file(const char *name)
     CloseHandle(hf);
     if (!view) { fprintf(stderr, "cannot map %s\n", full); table_bail(); }
     /* PrefetchVirtualMemory returns before the read-ahead ends, so the page walk is what waits */
-    if (n >= 64u * 1024 * 1024 && !warm_is_hot(view, n)) {
+    if (n >= 64u * 1024 * 1024) {
         WIN32_MEMORY_RANGE_ENTRY e;
         e.VirtualAddress = view;
         e.NumberOfBytes  = (SIZE_T)n;
