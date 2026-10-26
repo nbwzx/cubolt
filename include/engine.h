@@ -1423,6 +1423,73 @@ static void rend_sort_par(void)
     free(tmp);
 }
 
+/* Drop duplicate codes: adjacent-run on the sort path, hash set on --no-sort. */
+static unsigned long long rend_keyhash(const uint8_t *p, size_t n)
+{
+    unsigned long long h = 1469598103934665603ULL;   /* FNV-1a */
+    for (size_t i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211ULL; }
+    return h;
+}
+
+static void rend_dedup(void)
+{
+    if (!rend_on) return;
+    if (rend_ord) {                       /* sort path */
+        size_t w = 0;
+        for (size_t i = 1; i < rend_on; i++) {
+            const RendEnt *a = &rend_ent[rend_ord[w]], *b = &rend_ent[rend_ord[i]];
+            int same = a->klen == b->klen &&
+                       (a->klen == 0 || !memcmp(rend_keyar + a->koff,
+                                                rend_keyar + b->koff, a->klen));
+            if (!same) rend_ord[++w] = rend_ord[i];
+        }
+        rend_on = w + 1;
+        return;
+    }
+    /* --no-sort: hash-set dedup in discovery order. */
+    size_t *ord = rend_xrealloc(NULL, rend_on * sizeof(*ord));
+    if (!ord) return;                     /* OOM: keep the raw set */
+    size_t cap = 1;
+    while (cap < rend_on * 2) cap *= 2;
+    size_t *tab = rend_xrealloc(NULL, cap * sizeof(*tab));
+    size_t w = 0;
+    if (tab) {
+        for (size_t i = 0; i < cap; i++) tab[i] = (size_t)-1;
+        for (size_t i = 0; i < rend_on; i++) {
+            const uint8_t *kb = rend_ent[i].klen ? rend_keyar + rend_ent[i].koff : NULL;
+            size_t s = rend_keyhash(kb, rend_ent[i].klen) & (cap - 1);
+            int dup = 0;
+            while (tab[s] != (size_t)-1) {
+                size_t j = tab[s];
+                if (rend_ent[j].klen == rend_ent[i].klen &&
+                    (rend_ent[i].klen == 0 ||
+                     !memcmp(rend_keyar + rend_ent[j].koff, kb, rend_ent[i].klen))) {
+                    dup = 1; break;
+                }
+                s = (s + 1) & (cap - 1);
+            }
+            if (!dup) { tab[s] = i; ord[w++] = i; }
+        }
+        free(tab);
+    } else {                              /* OOM: same result, O(n^2) */
+        for (size_t i = 0; i < rend_on; i++) {
+            int dup = 0;
+            for (size_t j = 0; j < w; j++) {
+                size_t k = ord[j];
+                if (rend_ent[k].klen == rend_ent[i].klen &&
+                    (rend_ent[i].klen == 0 ||
+                     !memcmp(rend_keyar + rend_ent[k].koff,
+                             rend_keyar + rend_ent[i].koff, rend_ent[i].klen))) {
+                    dup = 1; break;
+                }
+            }
+            if (!dup) ord[w++] = i;
+        }
+    }
+    rend_ord = ord;                       /* discovery order */
+    rend_on = w;
+}
+
 static void report_block(const Job *j, long long nsol, unsigned long long hash,
                          double t_wall, double dt)
 {
@@ -1442,6 +1509,7 @@ static void report_block(const Job *j, long long nsol, unsigned long long hash,
         /* Nothing receives the lines, so the order is not worth buying: emit_line drops them. */
         int sorted = emit_kept();
         if (sorted) rend_sort_par();
+        rend_dedup();
         size_t nstd = 0;
         for (size_t i = 0; i < rend_on; i++) {
             size_t e = rend_nth(i);
