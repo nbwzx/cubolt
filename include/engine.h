@@ -452,6 +452,7 @@ struct PNode {
     int uf1, rf1, ff1, us1, rs1, gs1;
     u32 ct_idx, cls_ud, cls_rl, cls_fb, fs_ud, fs_rl, fs_fb;
     u32 cs_ud, cs_rl, cs_fb;   /* the clssym index each axis reads, built above */
+    int ctg;                   /* the corner gate's verdict, asked one pass early */
     int ud1, rl1, fb1;         /* the three lower bounds, kept for the survivors */
 };
 
@@ -555,6 +556,12 @@ static void search(Thr *th, int UD_flip, int RL_flip, int FB_flip,
         __builtin_prefetch(&fsst[P[j].fs_fb / 5]);
     }
 
+    /* The corner gate's verdict, one pass ahead of the walk that reads it. */
+    for (int j = 0; j < nmoves_in; j++) {
+        if (P[j].pass) continue;
+        P[j].ctg = CT_GET(P[j].ct_idx);
+    }
+
     /* The gates in order, counting as the plain loop did: a group skip jumps the rest of the
        face, and those moves never reached the counter above it.  A survivor takes pass 3, so
        the walk below reads the row the gate just filled. */
@@ -562,7 +569,7 @@ static void search(Thr *th, int UD_flip, int RL_flip, int FB_flip,
         if (P[j].pass == 1) continue;
         nodes++;
         if (P[j].pass == 2) continue;
-        int g = CT_GET(P[j].ct_idx);
+        int g = P[j].ctg;
         if (g >= togo) { j = mv_grp_skip(j, g, togo); continue; }
         int ud1 = dist_tab[3 * UD_d + fsst_get(P[j].fs_ud)];
         g = ud1;
