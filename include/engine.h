@@ -246,12 +246,6 @@ static u16 trit_dec[256];
 
 static inline int fsst_get(u32 i) { return (trit_dec[fsst[i / 5]] >> ((i % 5) << 1)) & 3; }
 
-/* The clssym entry the next step reads: [ss, flip] by col, asked ahead of the gate wanting it. */
-static inline u32 *clssym_step(int ss, int flip, int col)
-{
-    return &clssym[(size_t)N_FLIP * ss_move[N_MOVE * ss + col] + flip_move[N_MOVE * flip + col]];
-}
-
 /* list position -> column, the column on the other two axes, its cost: a list fits N_MOVE */
 static int mv_col[N_MOVE], mv_mrl[N_MOVE], mv_mfb[N_MOVE];
 /* Two moves of a group are one move apart, so one out of reach takes its group with it. */
@@ -449,20 +443,16 @@ static void emit_solution(Thr *th)
     emit_record(th->sp, &th->nsol, &th->solhash, tok);
 }
 
-/* P holds every child's table indices for the pass that reads them, R the children that
-   survived the gates.  Both belong to the call: the workers run search() at once. */
+/* P holds every child's table indices for the passes that read them; it belongs to the
+   call, since the workers run search() at once. */
 struct PNode {
-    int mrl, mfb;
     unsigned nrho;
     int nacc, pass;
     int c1, ut1, rt1, ft1;
     int uf1, rf1, ff1, us1, rs1, gs1;
     u32 ct_idx, cls_ud, cls_rl, cls_fb, fs_ud, fs_rl, fs_fb;
-};
-
-struct RNode {
-    int j, uf1, rf1, ff1, ut1, rt1, ft1, us1, rs1, gs1, c1, ud1, rl1, fb1, nacc;
-    unsigned nrho;
+    u32 cs_ud, cs_rl, cs_fb;   /* the clssym index each axis reads, built above */
+    int ud1, rl1, fb1;         /* the three lower bounds, kept for the survivors */
 };
 
 static void search(Thr *th, int UD_flip, int RL_flip, int FB_flip,
@@ -513,9 +503,8 @@ static void search(Thr *th, int UD_flip, int RL_flip, int FB_flip,
     /* The index work in two passes, split by dependency level: an fsst index needs its
        clssym class first, so the classes are all asked for before any of them is read.
        pass is what the cheap checks decided: 0 gates it, 1 the ban list closed it, 2 the
-       STM floor closed it after the node was counted. */
+       STM floor closed it after the node was counted, 3 it survived every gate. */
     struct PNode P[N_MOVE];
-    int np = 0;
     for (int j = 0; j < nmoves_in; j++) {
         int col = mv_col[j];
         unsigned nrho = child_open(banmask, j, rhos);
@@ -523,7 +512,7 @@ static void search(Thr *th, int UD_flip, int RL_flip, int FB_flip,
         int nacc = stm_child_std(acc_std, j, togo);
         P[j].pass = nacc < 0 ? 2 : 0;
         if (nacc < 0) continue;
-        P[j].mrl = mv_mrl[j]; P[j].mfb = mv_mfb[j];
+        int mrl = mv_mrl[j], mfb = mv_mfb[j];
         P[j].nrho = nrho; P[j].nacc = nacc;
 
         int c1  = corners_move[N_MOVE * corners + col];
@@ -531,13 +520,11 @@ static void search(Thr *th, int UD_flip, int RL_flip, int FB_flip,
         P[j].c1 = c1; P[j].ut1 = ut1;
         P[j].ct_idx = ct_coord(ctclssym[c1], ut1);
 
-        int mrl = P[j].mrl;
         int rt1 = twist_move[N_MOVE * RL_twist + mrl];
         int rf1 = flip_move[N_MOVE * RL_flip + mrl];
         int rs1 = ss_move[N_MOVE * RL_ss + mrl];
         P[j].rt1 = rt1; P[j].rf1 = rf1; P[j].rs1 = rs1;
 
-        int mfb = P[j].mfb;
         int ft1 = twist_move[N_MOVE * FB_twist + mfb];
         int ff1 = flip_move[N_MOVE * FB_flip + mfb];
         int gs1 = ss_move[N_MOVE * FB_ss + mfb];
@@ -545,16 +532,20 @@ static void search(Thr *th, int UD_flip, int RL_flip, int FB_flip,
 
         P[j].uf1 = flip_move[N_MOVE * UD_flip + col];
         P[j].us1 = ss_move[N_MOVE * UD_ss + col];
-        __builtin_prefetch(clssym_step(UD_ss, UD_flip, col));
-        __builtin_prefetch(clssym_step(RL_ss, RL_flip, mrl));
-        __builtin_prefetch(clssym_step(FB_ss, FB_flip, mfb));
+        P[j].cs_ud = (u32)N_FLIP * P[j].us1 + P[j].uf1;
+        P[j].cs_rl = (u32)N_FLIP * P[j].rs1 + P[j].rf1;
+        P[j].cs_fb = (u32)N_FLIP * P[j].gs1 + P[j].ff1;
+        /* Each axis's class index, built from the move this pass already read. */
+        __builtin_prefetch(&clssym[P[j].cs_ud]);
+        __builtin_prefetch(&clssym[P[j].cs_rl]);
+        __builtin_prefetch(&clssym[P[j].cs_fb]);
     }
 
     for (int j = 0; j < nmoves_in; j++) {
         if (P[j].pass) continue;
-        P[j].cls_ud = *clssym_step(UD_ss, UD_flip, mv_col[j]);
-        P[j].cls_rl = *clssym_step(RL_ss, RL_flip, P[j].mrl);
-        P[j].cls_fb = *clssym_step(FB_ss, FB_flip, P[j].mfb);
+        P[j].cls_ud = clssym[P[j].cs_ud];
+        P[j].cls_rl = clssym[P[j].cs_rl];
+        P[j].cls_fb = clssym[P[j].cs_fb];
         __builtin_prefetch(&ctdepth[P[j].ct_idx]);
         P[j].fs_ud = ct_coord(P[j].cls_ud, P[j].ut1);
         __builtin_prefetch(&fsst[P[j].fs_ud / 5]);
@@ -565,8 +556,8 @@ static void search(Thr *th, int UD_flip, int RL_flip, int FB_flip,
     }
 
     /* The gates in order, counting as the plain loop did: a group skip jumps the rest of the
-       face, and those moves never reached the counter above it. */
-    struct RNode R[N_MOVE];
+       face, and those moves never reached the counter above it.  A survivor takes pass 3, so
+       the walk below reads the row the gate just filled. */
     for (int j = 0; j < nmoves_in; j++) {
         if (P[j].pass == 1) continue;
         nodes++;
@@ -586,26 +577,20 @@ static void search(Thr *th, int UD_flip, int RL_flip, int FB_flip,
         if (ud1 != 0 && ud1 == rl1 && rl1 == fb1) {
             if (ud1 + 1 >= togo) continue;
         }
-        R[np].j = j;
-        R[np].uf1 = P[j].uf1; R[np].rf1 = P[j].rf1; R[np].ff1 = P[j].ff1;
-        R[np].ut1 = P[j].ut1; R[np].rt1 = P[j].rt1; R[np].ft1 = P[j].ft1;
-        R[np].us1 = P[j].us1; R[np].rs1 = P[j].rs1; R[np].gs1 = P[j].gs1;
-        R[np].c1 = P[j].c1;
-        R[np].ud1 = ud1; R[np].rl1 = rl1; R[np].fb1 = fb1;
-        R[np].nacc = P[j].nacc; R[np].nrho = P[j].nrho;
-        np++;
+        P[j].pass = 3;
+        P[j].ud1 = ud1; P[j].rl1 = rl1; P[j].fb1 = fb1;
     }
 
     /* The survivors, in order, once every table read above is done. */
-    for (int k = 0; k < np; k++) {
-        int j = R[k].j;
+    for (int j = 0; j < nmoves_in; j++) {
+        if (P[j].pass != 3) continue;
         th->sofar[sp] = j;
         th->sp = sp + 1;
         th->nodecount = nodes;
-        search(th, R[k].uf1, R[k].rf1, R[k].ff1, R[k].ut1, R[k].rt1, R[k].ft1,
-                   R[k].us1, R[k].rs1, R[k].gs1, R[k].c1,
-                   R[k].ud1, R[k].rl1, R[k].fb1,
-                   togo - 1, R[k].nacc, R[k].nrho, child_banmask(j, rhos));
+        search(th, P[j].uf1, P[j].rf1, P[j].ff1, P[j].ut1, P[j].rt1, P[j].ft1,
+                   P[j].us1, P[j].rs1, P[j].gs1, P[j].c1,
+                   P[j].ud1, P[j].rl1, P[j].fb1,
+                   togo - 1, P[j].nacc, P[j].nrho, child_banmask(j, rhos));
         nodes = th->nodecount;
     }
     th->nodecount = nodes;
