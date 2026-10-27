@@ -627,11 +627,11 @@ static unsigned __stdcall par_worker(void *arg)
         search(&th, t->UD_flip, t->RL_flip, t->FB_flip, t->UD_twist, t->RL_twist, t->FB_twist,
                t->UD_ss, t->RL_ss, t->FB_ss, t->corners,
                t->UD_d, t->RL_d, t->FB_d, t->togo, t->acc_std, t->rhos, t->banmask);
-        emit_drain();
         st->nodes   += th.nodecount;
         st->nsol    += th.nsol;
         st->solhash += th.solhash;
     }
+    emit_drain();
     rend_thread_done();
     return 0;
 }
@@ -666,9 +666,11 @@ static void par_fanout(unsigned __stdcall (*worker)(void *), int nthr,
     }
 }
 
-/* A few hundred tasks per thread: deeper evens the frontier, but each level costs serial work. */
-#define SPLIT_TASKS_PER_THREAD 256
-    /* task size floor: the split is capped so one task keeps this many nodes */
+/* the frontier jumps ~7x a ply, so the count is measured ply by ply, not estimated */
+#define SPLIT_TASKS_PER_THREAD 32
+/* a pass this size per task dilutes a heavy subtree the workers cannot steal from */
+#define SPLIT_TASK_TARGET_NODES 50000
+/* task size floor: the split is capped so one task keeps this many nodes */
 #define SPLIT_MIN_TASK_NODES   100
 
 static int pick_split(int nthr, int togo, long long walk_nodes)
@@ -1225,33 +1227,45 @@ static void print_header(const Job *j, const char *cubestring, int from)
 }
 
     /* the top split plies of each start, expanded serially into one counter-pulled task list */
-static long long par_pass(const Start *S, int nm, int togo, int split,
+static long long par_pass(const Start *S, int nm, int togo, int split, long long pass_est,
                           long long *nsol_out, unsigned long long *hash_out)
 {
-    ntasks = 0;
-    next_task = 0;
+    /* the frontier is measured a ply at a time: the last count is the split that stays */
+    long long target = SPLIT_TASKS_PER_THREAD * (par_threads > 1 ? par_threads : 1);
+    if (pass_est / SPLIT_TASK_TARGET_NODES > target)
+        target = pass_est / SPLIT_TASK_TARGET_NODES;
+    if (split > 1) split = 1;          /* the ply walk starts at the top: the count decides */
     long long nodes = 0, nsol = 0;
     unsigned long long hash = 0;
     Thr coll;
-    for (int m = 0; m < nm; m++) {
-        if (togo < S[m].from) continue;
-        memset(&coll, 0, sizeof coll);
-        coll.split = split;
-        search(&coll, S[m].UD_flip, S[m].RL_flip, S[m].FB_flip,
-               S[m].UD_twist, S[m].RL_twist, S[m].FB_twist,
-               S[m].UD_ss, S[m].RL_ss, S[m].FB_ss, S[m].corners,
-               S[m].UD_d, S[m].RL_d, S[m].FB_d, togo, 0, 1u, 0);
-        nodes += coll.nodecount;
-        nsol  += coll.nsol;
-        hash  += coll.solhash;
+    for (;;) {
+        ntasks = 0;
+        next_task = 0;
+        nodes = 0;
+        nsol = 0;
+        hash = 0;
+        for (int m = 0; m < nm; m++) {
+            if (togo < S[m].from) continue;
+            memset(&coll, 0, sizeof coll);
+            coll.split = split;
+            search(&coll, S[m].UD_flip, S[m].RL_flip, S[m].FB_flip,
+                   S[m].UD_twist, S[m].RL_twist, S[m].FB_twist,
+                   S[m].UD_ss, S[m].RL_ss, S[m].FB_ss, S[m].corners,
+                   S[m].UD_d, S[m].RL_d, S[m].FB_d, togo, 0, 1u, 0);
+            nodes += coll.nodecount;
+            nsol  += coll.nsol;
+            hash  += coll.solhash;
+        }
+        if (split == 0 || ntasks == 0 || engine_stop ||
+            ntasks >= target || split >= togo - 1 || split >= 6) {
+            int nthr = par_threads < ntasks ? par_threads : ntasks;
+            par_fanout(par_worker, nthr, &nodes, &nsol, &hash);
+            *nsol_out = nsol;
+            *hash_out = hash;
+            return nodes;
+        }
+        split++;
     }
-    if (ntasks == 0) { *nsol_out = nsol; *hash_out = hash; return nodes; }
-
-    int nthr = par_threads < ntasks ? par_threads : ntasks;
-    par_fanout(par_worker, nthr, &nodes, &nsol, &hash);
-    *nsol_out = nsol;
-    *hash_out = hash;
-    return nodes;
 }
 
 /* One start per completion, walked a layer at a time: a shallower answer retires the deeper one. */
@@ -1267,12 +1281,13 @@ static void run_passes(const Start *S, int nm, int searchdepth, int from,
         int sp = par_threads > 1 ? split_for(togo, prev_nodes, nm) : 0;
         /* One list for every completion, but only once they are split and --optimal is off. */
         int batch = (sp && !opt_mode) ? nm : 1;
+        long long pass_est = nm ? prev_nodes / nm * nmoves_in / 2 : 0;
         double t1 = now_sec();
         long long nodes = 0, pnsol = 0, nsol_before = *nsol_out;
         unsigned long long phash = 0;
         for (int m = 0; m < nm; m += batch) {
             opt_found = 0;
-            long long nd = par_pass(S + m, batch, togo, sp, &pnsol, &phash);
+            long long nd = par_pass(S + m, batch, togo, sp, pass_est, &pnsol, &phash);
             totnodes  += nd;
             nodes     += nd;
             *nsol_out += pnsol;
