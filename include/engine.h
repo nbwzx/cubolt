@@ -96,7 +96,9 @@ static int   tab_out = 0;
 /* --solhash asks for the solutions' hash in any run, --bench's rows included. */
 static int   hash_wanted = 0;
 /* A parallel walk's workers all count into it, so the increments have to be atomic. */
-static volatile long len_seen[MOVE_CAP];
+/* one line apiece: every solution bumps one, and shared lines bounce between the workers */
+typedef struct { _Alignas(64) volatile long v; } LenSeen;
+static LenSeen len_seen[MOVE_CAP];
 /* Solutions that came out as at least one notation; nsol counts those that did not too. */
 static volatile long long spelled_sol;
 static char *tab_row;          /* the line the last job built; run_batch collects these */
@@ -416,7 +418,7 @@ static void emit_record(int sp, long long *nsol, unsigned long long *hash,
                         const unsigned char *cols)
 {
     (*nsol)++;
-    InterlockedIncrement(&len_seen[sp]);   /* the `lengths` column of --bench */
+    InterlockedIncrement(&len_seen[sp].v); /* the `lengths` column of --bench */
     if (hash_wanted) *hash += fnv_cols(cols, sp);
     /* spelled only to be dropped when nothing is taking it, which a billion of them adds up */
     if (dump_mode && emit_kept()) {
@@ -605,7 +607,8 @@ static void search(Thr *th, int UD_flip, int RL_flip, int FB_flip,
 
 /* ---- the parallel driver ---- */
 
-typedef struct { long long nodes, nsol; unsigned long long solhash; } ParStat;
+/* one per worker, on its own cache line: every finished task writes these counters */
+typedef struct { _Alignas(64) long long nodes, nsol; unsigned long long solhash; } ParStat;
 
 static unsigned __stdcall par_worker(void *arg)
 {
@@ -669,9 +672,9 @@ static void par_fanout(unsigned __stdcall (*worker)(void *), int nthr,
 /* the frontier jumps ~7x a ply, so the count is measured ply by ply, not estimated */
 #define SPLIT_TASKS_PER_THREAD 32
 /* a pass this size per task dilutes a heavy subtree the workers cannot steal from */
-#define SPLIT_TASK_TARGET_NODES 50000
+#define SPLIT_TASK_TARGET_NODES 20000
 /* task size floor: the split is capped so one task keeps this many nodes */
-#define SPLIT_MIN_TASK_NODES   100
+#define SPLIT_MIN_TASK_NODES    100
 
 static int pick_split(int nthr, int togo, long long walk_nodes)
 {
@@ -1320,7 +1323,7 @@ static int emit_tab_row(const Job *j, long long nsol, unsigned long long hash,
     char lens[256];
     int p = 0;
     for (int L = 0; L < MOVE_CAP && p < (int)sizeof lens - 12; L++)
-        if (len_seen[L]) p += snprintf(lens + p, sizeof lens - p, "%s%d", p ? "," : "", L);
+        if (len_seen[L].v) p += snprintf(lens + p, sizeof lens - p, "%s%d", p ? "," : "", L);
     lens[p] = 0;
     int keep = std_keep();
     size_t nstd = 0;
@@ -1574,7 +1577,7 @@ static int run_job(const Job *j)
     sol_rev     = 0;
     totnodes  = 0;
     spelled_sol = 0;
-    for (int L = 0; L < MOVE_CAP; L++) len_seen[L] = 0;
+    for (int L = 0; L < MOVE_CAP; L++) len_seen[L].v = 0;
     outfh     = NULL;
     outpath   = j->outpath;
     /* a file captures the list, so stdout need not repeat; --quiet forces it off */
