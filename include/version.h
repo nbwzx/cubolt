@@ -7,8 +7,8 @@
 #define VERSION_H
 
 #define CUBOLT_VERSION_MAJOR 0
-#define CUBOLT_VERSION_MINOR 3
-#define CUBOLT_VERSION_PATCH 1
+#define CUBOLT_VERSION_MINOR 4
+#define CUBOLT_VERSION_PATCH 0
 
 #define CUBOLT_NAME    "Cubolt"
 #define CUBOLT_AUTHOR  "Zixing Wang"
