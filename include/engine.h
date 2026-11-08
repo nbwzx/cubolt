@@ -454,7 +454,7 @@ struct PNode {
     int uf1, rf1, ff1, us1, rs1, gs1;
     u32 ct_idx, cls_ud, cls_rl, cls_fb, fs_ud, fs_rl, fs_fb;
     u32 cs_ud, cs_rl, cs_fb;   /* the clssym index each axis reads, built above */
-    int ctg;                   /* the corner gate's verdict, asked one pass early */
+    int ctg;                   /* the corner-twist bound, read to gate the class reads */
     int ud1, rl1, fb1;         /* the three lower bounds, kept for the survivors */
 };
 
@@ -542,26 +542,24 @@ static void search(Thr *th, int UD_flip, int RL_flip, int FB_flip,
         __builtin_prefetch(&clssym[P[j].cs_ud]);
         __builtin_prefetch(&clssym[P[j].cs_rl]);
         __builtin_prefetch(&clssym[P[j].cs_fb]);
+        /* prefetch the corner-twist depth; its read below gates the class reads */
+        __builtin_prefetch(&ctdepth[P[j].ct_idx]);
     }
 
     for (int j = 0; j < nmoves_in; j++) {
         if (P[j].pass) continue;
+        /* the corner-twist bound, read before the class reads below, gates them */
+        P[j].ctg = CT_GET(P[j].ct_idx);
+        if (P[j].ctg >= togo) continue;   /* corner gate closes it: no class reads */
         P[j].cls_ud = clssym[P[j].cs_ud];
         P[j].cls_rl = clssym[P[j].cs_rl];
         P[j].cls_fb = clssym[P[j].cs_fb];
-        __builtin_prefetch(&ctdepth[P[j].ct_idx]);
         P[j].fs_ud = ct_coord(P[j].cls_ud, P[j].ut1);
         __builtin_prefetch(&fsst[P[j].fs_ud / 5]);
         P[j].fs_rl = ct_coord(P[j].cls_rl, P[j].rt1);
         __builtin_prefetch(&fsst[P[j].fs_rl / 5]);
         P[j].fs_fb = ct_coord(P[j].cls_fb, P[j].ft1);
         __builtin_prefetch(&fsst[P[j].fs_fb / 5]);
-    }
-
-    /* The corner gate's verdict, one pass ahead of the walk that reads it. */
-    for (int j = 0; j < nmoves_in; j++) {
-        if (P[j].pass) continue;
-        P[j].ctg = CT_GET(P[j].ct_idx);
     }
 
     /* The gates in order, counting as the plain loop did: a group skip jumps the rest of the
