@@ -1079,7 +1079,9 @@ static LRESULT CALLBACK cs_sub(HWND w, UINT m, WPARAM wp, LPARAM lp,
         for (char *p = buf; *p; p++)
             if (*p == '\r' || *p == '\n') *p = ' ';
         SetWindowText(w, buf);
-        SendMessage(w, EM_SETSEL, 0, -1);
+        /* caret to end, no selection: EM_SETSEL(0,-1) selected everything after paste */
+        int len = (int)strlen(buf);
+        SendMessage(w, EM_SETSEL, len, len);
         return r;
     }
     return DefSubclassProc(w, m, wp, lp);
