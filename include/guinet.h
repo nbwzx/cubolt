@@ -564,10 +564,12 @@ static void canvas_click(HWND hw, int mx, int my, int rmb)
 {
     int fi = 0, r = 0, c = 0;
     if (net_at(mx, my, &fi, &r, &c)) {
-        /* a center is where a color is taken from; its own color is the frame's, not a choice */
+        /* the color at the center, not face fi: a rotation scramble moves it off the label */
         if (r == 1 && c == 1) {
-            if (rmb || fi == g.curcol) return;
-            g.curcol = fi;
+            if (rmb) return;
+            int picked = face_index(g.net[fi][1][1]);
+            if (picked == g.curcol) return;
+            g.curcol = picked;
             rebuild_bucket_cursor();
             InvalidateRect(hw, NULL, TRUE);
             return;
