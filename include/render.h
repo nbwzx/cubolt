@@ -191,6 +191,50 @@ static void rend_reset(void)
     rend_said = 0;
 }
 
+/* canonical key: per-axis turn of each run (rotations as separators); folds f/S F, r/R M, u/U E.
+ * out[] must hold 2*REND_MAXOUT+16. */
+static int rend_canon(const uint8_t *kb, int kn, uint8_t *out) __attribute__((unused));
+static int rend_canon(const uint8_t *kb, int kn, uint8_t *out)
+{
+    int o = 0, ax = -1, A = 0, B = 0, S = 0;
+    for (int i = 0; i < kn; i++) {
+        int L = kb[i] >> 2, amt = kb[i] & 3;
+        int d = amt == 3 ? 3 : amt;            /* a prime keeps its own value, not a mod-3 fold */
+        if (L >= R_X && L < R_WU) {            /* a rotation breaks it; a zero run is identity */
+            if (ax >= 0 && (A | B | S)) {
+                out[o++] = (uint8_t)(0xC0 | ax);
+                out[o++] = (uint8_t)((A<<4)|(B<<2)|S);
+            }
+            ax = -1; A = B = S = 0;
+            out[o++] = (uint8_t)(0x80 | L);
+            out[o++] = (uint8_t)amt;
+            continue;
+        }
+        int rax, dA = 0, dB = 0, dS = 0;
+        if      (L < R_E)   { rax = L % 3;          if (L < 3) dA = d; else dB = d; }
+        else if (L < R_WU)  { rax = L - R_E;        dS = d; }
+        else {   /* wide = face + slice; slice with face on FB, opposite on UD/RL */
+            rax = (L - R_WU) % 3;
+            if (L - R_WU < 3) dA = d; else dB = d;
+            dS = ((rax == 2) == (dA != 0)) ? d : ((4 - d) & 3);
+        }
+        if (rax != ax) {
+            /* a run that netted to zero is identity, so it adds nothing before the next axis */
+            if (ax >= 0 && (A | B | S)) {
+                out[o++] = (uint8_t)(0xC0 | ax);
+                out[o++] = (uint8_t)((A<<4)|(B<<2)|S);
+            }
+            ax = rax; A = B = S = 0;
+        }
+        A = (A + dA) & 3; B = (B + dB) & 3; S = (S + dS) & 3;
+    }
+    if (ax >= 0 && (A | B | S)) {
+        out[o++] = (uint8_t)(0xC0 | ax);
+        out[o++] = (uint8_t)((A<<4)|(B<<2)|S);
+    }
+    return o;
+}
+
 /* appends the key of a rendering; 1 = it did */
 static int rend_store(const uint8_t *kb, int kn, int cm)
 {
