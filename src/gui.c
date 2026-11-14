@@ -1371,11 +1371,12 @@ static void build_ui(HWND hw, HINSTANCE hinst)
                       x + SZ(228), SZ(320), SZ(152), SZ(40), hw, ID_STOP);
     EnableWindow(g.stop_btn, FALSE);
 
-    mkf(0, "STATIC", "Solutions (dbl-click or Ctrl+C copies)", 0,
+    mkf(0, "STATIC", "Solutions (drag / Ctrl+click to select, Ctrl+C copies)", 0,
         x, SZ(372), SZ(PANEL_W), SZ(18), hw, 0);
-    /* LBS_NOINTEGRALHEIGHT: otherwise the height rounds down and leaves a dead band */
+    /* LBS_NOINTEGRALHEIGHT: otherwise the height rounds down and leaves a dead band.
+     * LBS_EXTENDEDSEL: drag or Ctrl+click to select several rows at once. */
     g.list = mkf(WS_EX_CLIENTEDGE, "LISTBOX", NULL,
-                 LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_HSCROLL,
+                 LBS_NOTIFY | LBS_EXTENDEDSEL | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_HSCROLL,
                  x, SZ(LIST_TOP), SZ(PANEL_W), g_list_h, hw, ID_LIST);
     {
         /* fixed-pitch font, plus a wide horizontal extent so a long solution scrolls into view */
@@ -1428,17 +1429,42 @@ static void build_ui(HWND hw, HINSTANCE hinst)
 /* a double-click asks for the same thing; only the button complains when nothing is selected */
 static void copy_selected(HWND hw, int quiet)
 {
-    int sel = (int)SendMessage(g.list, LB_GETCURSEL, 0, 0);
-    if (sel < 0 || sel >= g.nsol) {
-        if (!quiet) ui_msg(hw, "Select a solution first.", "Nothing selected", MB_OK);
+    int count = (int)SendMessage(g.list, LB_GETSELCOUNT, 0, 0);
+    if (count <= 0) {
+        if (!quiet) ui_msg(hw, "Select one or more solutions first.", "Nothing selected", MB_OK);
         return;
     }
-    if (!set_clipboard(g.solutions[sel])) {
-        if (!quiet) ui_msg(hw, CLIP_FAIL_MSG, COPY_TITLE,
-                           MB_OK | MB_ICONERROR);
+    int *sel = malloc((size_t)count * sizeof(int));
+    if (!sel) {
+        if (!quiet) ui_msg(hw, CLIP_FAIL_MSG, COPY_TITLE, MB_OK | MB_ICONERROR);
         return;
     }
-    log_appendf("copied: %s\n", g.solutions[sel]);
+    SendMessage(g.list, LB_GETSELITEMS, (WPARAM)count, (LPARAM)sel);
+    size_t n = 1;
+    for (int i = 0; i < count; i++)
+        if (sel[i] >= 0 && sel[i] < g.nsol) n += strlen(g.solutions[sel[i]]) + 1;
+    char *all = malloc(n);
+    if (!all) {
+        free(sel);
+        if (!quiet) ui_msg(hw, CLIP_FAIL_MSG, COPY_TITLE, MB_OK | MB_ICONERROR);
+        return;
+    }
+    char *w = all;
+    for (int i = 0; i < count; i++) {
+        int idx = sel[i];
+        if (idx < 0 || idx >= g.nsol) continue;
+        size_t k = strlen(g.solutions[idx]);
+        memcpy(w, g.solutions[idx], k); w += k;
+        *w++ = '\n';
+    }
+    *w = 0;
+    if (!set_clipboard(all)) {
+        if (!quiet) ui_msg(hw, CLIP_FAIL_MSG, COPY_TITLE, MB_OK | MB_ICONERROR);
+    } else {
+        log_appendf("copied %d solution(s)\n", count);
+    }
+    free(all);
+    free(sel);
 }
 
 static HMENU build_thread_menu(void)
